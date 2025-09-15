@@ -182,39 +182,48 @@ app.delete(
 app.get(
   "/articles",
   asyncErrorHandler(async (req, res) => {
-    const { cursor, take, orderBy, word } = create(
+    const { offset, take, orderBy, word } = create(
       req.query,
       GetArticleListRequestStruct
     );
 
-    const articleEntities = await prismaClient.article.findMany({
-      cursor: cursor
-        ? {
-            id: cursor,
-          }
-        : undefined,
-      take: take + 1,
-      orderBy: orderBy === "recent" ? { id: "desc" } : { id: "asc" },
-      where: {
-        title: word ? { contains: word } : undefined,
-      },
-    });
+    const whereCondition = word
+      ? {
+          OR: [
+            { title: { contains: word } },
+            { content: { contains: word } },
+          ],
+        }
+      : {};
+
+    const [articleEntities, totalCount] = await Promise.all([
+      prismaClient.article.findMany({
+        skip: offset,
+        take: take,
+        orderBy: orderBy === "recent" ? { id: "desc" } : { id: "asc" },
+        where: whereCondition,
+      }),
+      prismaClient.article.count({
+        where: whereCondition,
+      }),
+    ]);
 
     const articles = articleEntities.map(
       (articleEntity) => new Article(articleEntity)
     );
 
-    const hasNext = articles.length === take + 1;
+    const hasNext = offset + take < totalCount;
 
     return res.send({
-      data: articles.slice(0, take).map((article) => ({
+      data: articles.map((article) => ({
         id: article.getId(),
         title: article.getTitle(),
         content: article.getContent(),
         createdAt: article.getCreatedAt(),
       })),
       hasNext,
-      nextCursor: hasNext ? articles[articles.length - 1].getId() : null,
+      totalCount,
+      currentPage: Math.floor(offset / take) + 1,
     });
   })
 );
